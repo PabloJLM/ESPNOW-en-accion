@@ -2,11 +2,15 @@
 #include <Arduino.h>
 #include "config.h"
 
-// Terminal serial del nodo MAESTRO. Solo hace algo si IS_MASTER == 1.
-// SIEMPRE activa (no depende de en que pantalla del OLED estes, ni de
-// entrar a "Modo PC"): al arrancar imprime un banner y el prompt
-// "meshnow:~$ " de una vez, con eco y backspace como una terminal de
-// verdad, igual que en el proyecto camioneta. Comandos disponibles:
+// Terminal serial del nodo MAESTRO ("Modo PC" en el menu, igual que
+// camioneta). Solo hace algo si IS_MASTER == 1, y solo mientras
+// currentScreen == SCR_PCMODE (entrar a esa pantalla la prende, salir
+// la apaga). Nota: si el serial no responde en nada, revisa en el IDE
+// Tools > "USB CDC On Boot" -> Enabled (si esta en Disabled, el
+// Serial de Arduino no sale por el puerto USB que monitoreas).
+//
+// Al entrar imprime un banner y el prompt "meshnow:~$ ", con eco y
+// backspace como una terminal de verdad. Comandos disponibles:
 //
 //   help                     esta ayuda
 //   status                   metricas de la malla (tx/rx/relay/pps/rssi...)

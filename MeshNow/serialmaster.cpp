@@ -1,4 +1,5 @@
 #include "serialmaster.h"
+#include <U8g2lib.h>
 #include "mesh.h"
 #include "buzzer.h"
 #include "neopixel.h"
@@ -6,8 +7,27 @@
 
 #if IS_MASTER
 
-// Terminal serial SIEMPRE activa (igual que camioneta): no depende de
-// que pantalla este mostrando el OLED. Se prende sola al arrancar.
+// Pantalla "Modo PC": mismo patron que screen_pcmode.cpp de camioneta
+// -- este archivo es DUENO total de la pantalla mientras currentScreen
+// == SCR_PCMODE (dibuja su propio buffer, lee su propio boton BACK, y
+// procesa el serial como una terminal linux).
+
+extern U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2;
+
+static const unsigned char image_terminal_bits[] U8X8_PROGMEM = {
+  0x00,0x00,0x00,0x00,0xfe,0xff,0xff,0x7f,0x02,0x00,0x00,0x40,0x02,0x00,0x00,0x40,
+  0x02,0x00,0x00,0x40,0x02,0x00,0x00,0x40,0x72,0x00,0x00,0x40,0x8a,0x00,0x00,0x40,
+  0x8a,0x00,0x00,0x40,0x8a,0x00,0x00,0x40,0x72,0x00,0x00,0x40,0x02,0x00,0x00,0x40,
+  0x02,0x00,0x00,0x40,0x02,0x00,0x00,0x40,0xfe,0xff,0xff,0x7f,0x00,0x00,0x00,0x00
+};
+static const unsigned char image_Layer_9_bits[] U8X8_PROGMEM = {
+  0x7e,0x7e,0x7e,0x7e,0x99,0x99,0x99,0x99,
+  0x67,0xe6,0x67,0xe6,0x18,0x18,0x18,0x18,
+  0x67,0xe6,0x67,0xe6,0x99,0x99,0x99,0x99,
+  0x7e,0x7e,0x7e,0x7e
+};
+
+static bool pcModeInitialized = false;
 
 static void macStr(const uint8_t* m, char* out, size_t n) {
   snprintf(out, n, "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -55,6 +75,7 @@ static void printHelp() {
   Serial.println(F("  rgb/R/G/B                prueba color en las neopixeles (3s)"));
   Serial.println(F("  buzzer                   prueba el buzzer"));
   Serial.println(F("  clear / cls              limpia la terminal"));
+  Serial.println(F("  exit                     vuelve al menu"));
 }
 
 static void printNodes() {
@@ -87,122 +108,134 @@ static void nextToken(char*& p, char* buf, size_t n) {
   while (*p == ' ') p++;
 }
 
-static void handleCommand(String commandBuffer) {
-  commandBuffer.trim();
-  Serial.println();
-
-  if (commandBuffer == "help" || commandBuffer == "?") {
-    printHelp();
-
-  } else if (commandBuffer == "status") {
-    printSection("estado de la malla");
-    MeshMetrics m = meshGetMetrics();
-    printRow("tx", String((unsigned long)m.tx));
-    printRow("rx", String((unsigned long)m.rx));
-    printRow("relay", String((unsigned long)m.relay));
-    printRow("dup", String((unsigned long)m.dup));
-    printRow("pps", String(m.pps));
-    printRow("rssi", String(m.lastRssi));
-    printRow("vivos", String(meshNodeCount()));
-    printRow("directos", String(meshDirectCount()));
-
-  } else if (commandBuffer == "info") {
-    printSection("info del nodo");
-    char id[10]; meshFormatId(meshMyId(), id, sizeof(id));
-    printRow("id", String(id));
-    printRow("nombre", String(meshMyName()));
-    printRow("rol", String("maestro"));
-    printRow("canal", String(MESH_CHANNEL));
-    printRow("ttl", String(MESH_TTL));
-
-  } else if (commandBuffer == "nodes" || commandBuffer == "ls") {
-    printNodes();
-
-  } else if (commandBuffer == "ping") {
-    meshSendPing();
-    Serial.println(F("  ok: barrido lanzado"));
-
-  } else if (commandBuffer.startsWith("send ")) {
-    String txt = commandBuffer.substring(5);
-    meshSendText(txt.c_str());
-    Serial.print(F("  ok: mandado a todos -> "));
-    Serial.println(txt);
-
-  } else if (commandBuffer.startsWith("sendto ")) {
-    char line[96];
-    commandBuffer.substring(7).toCharArray(line, sizeof(line));
-    char* p = line;
-    char idBuf[8];
-    nextToken(p, idBuf, sizeof(idBuf));
-    uint16_t dst = (uint16_t)strtoul(idBuf, nullptr, 16);
-    meshSendText(p, dst);
-    Serial.printf("  ok: mandado a %s -> %s\n", idBuf, p);
-
-  } else if (commandBuffer == "canned") {
-    printSection("mensajes prehechos");
-    for (int i = 0; i < meshCannedCount(); i++)
-      Serial.printf("  %d: %s\n", i, meshCannedAt(i));
-
-  } else if (commandBuffer.startsWith("canned ")) {
-    char line[64];
-    commandBuffer.substring(7).toCharArray(line, sizeof(line));
-    char* p = line;
-    char idxBuf[6];
-    nextToken(p, idxBuf, sizeof(idxBuf));
-    int idx = atoi(idxBuf);
-    uint16_t dst = 0xFFFF;
-    if (*p) dst = (uint16_t)strtoul(p, nullptr, 16);
-    if (idx < 0 || idx >= meshCannedCount()) {
-      Serial.println(F("  error: indice invalido (usa 'canned' para verlos)"));
-    } else {
-      meshSendText(meshCannedAt(idx), dst);
-      Serial.printf("  ok: prehecho %d -> %04X\n", idx, dst);
-    }
-
-  } else if (commandBuffer.startsWith("rgb/")) {
-    int r, g, b;
-    if (sscanf(commandBuffer.c_str(), "rgb/%d/%d/%d", &r, &g, &b) == 3) {
-      r = constrain(r, 0, 255); g = constrain(g, 0, 255); b = constrain(b, 0, 255);
-      neopixelManual((uint8_t)r, (uint8_t)g, (uint8_t)b, 3000);
-      Serial.printf("  ok: rgb -> %d/%d/%d (3s)\n", r, g, b);
-    } else {
-      Serial.println(F("  uso: rgb/R/G/B"));
-    }
-
-  } else if (commandBuffer == "buzzer") {
-    Serial.println(F("  probando buzzer..."));
-    buzzerBeep();
-    delay(200);
-    buzzerBeep();
-    Serial.println(F("  ok"));
-
-  } else if (commandBuffer == "clear" || commandBuffer == "cls") {
-    Serial.print(F("\033[2J\033[H"));
-
-  } else if (commandBuffer.length() > 0) {
-    Serial.print(F("  command not found: "));
-    Serial.println(commandBuffer);
-    Serial.println(F("  escribe 'help' para ver los comandos"));
+// ---------- boton BACK (debounce propio, igual que screen_pcmode) ----------
+static bool isButtonJustPressed(int pin) {
+  static uint8_t lastStableState = HIGH;
+  static uint8_t lastReading     = HIGH;
+  static unsigned long lastDebounceTime = 0;
+  uint8_t reading = digitalRead(pin);
+  if (reading != lastReading) { lastDebounceTime = millis(); lastReading = reading; }
+  if ((millis() - lastDebounceTime) > 50) {
+    if (lastStableState == HIGH && reading == LOW) { lastStableState = reading; return true; }
+    lastStableState = reading;
   }
-
-  Serial.println();
-  printPrompt();
+  return false;
 }
 
-void serialMasterBegin() {
-  delay(200);   // deja que el puerto USB termine de enumerar
-  printBanner();
-  printPrompt();
-}
-
-void serialMasterLoop() {
+// ---------- procesamiento de comandos (buffer String) ----------
+static void processSerialCommand() {
   static String commandBuffer = "";
   while (Serial.available() > 0) {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
       if (commandBuffer.length() > 0) {
-        handleCommand(commandBuffer);
+        commandBuffer.trim();
+        Serial.println();
+
+        if (commandBuffer == "help" || commandBuffer == "?") {
+          printHelp();
+
+        } else if (commandBuffer == "status") {
+          printSection("estado de la malla");
+          MeshMetrics m = meshGetMetrics();
+          printRow("tx", String((unsigned long)m.tx));
+          printRow("rx", String((unsigned long)m.rx));
+          printRow("relay", String((unsigned long)m.relay));
+          printRow("dup", String((unsigned long)m.dup));
+          printRow("pps", String(m.pps));
+          printRow("rssi", String(m.lastRssi));
+          printRow("vivos", String(meshNodeCount()));
+          printRow("directos", String(meshDirectCount()));
+
+        } else if (commandBuffer == "info") {
+          printSection("info del nodo");
+          char id[10]; meshFormatId(meshMyId(), id, sizeof(id));
+          printRow("id", String(id));
+          printRow("nombre", String(meshMyName()));
+          printRow("rol", String("maestro"));
+          printRow("canal", String(MESH_CHANNEL));
+          printRow("ttl", String(MESH_TTL));
+
+        } else if (commandBuffer == "nodes" || commandBuffer == "ls") {
+          printNodes();
+
+        } else if (commandBuffer == "ping") {
+          meshSendPing();
+          Serial.println(F("  ok: barrido lanzado"));
+
+        } else if (commandBuffer.startsWith("send ")) {
+          String txt = commandBuffer.substring(5);
+          meshSendText(txt.c_str());
+          Serial.print(F("  ok: mandado a todos -> "));
+          Serial.println(txt);
+
+        } else if (commandBuffer.startsWith("sendto ")) {
+          char line[96];
+          commandBuffer.substring(7).toCharArray(line, sizeof(line));
+          char* p = line;
+          char idBuf[8];
+          nextToken(p, idBuf, sizeof(idBuf));
+          uint16_t dst = (uint16_t)strtoul(idBuf, nullptr, 16);
+          meshSendText(p, dst);
+          Serial.printf("  ok: mandado a %s -> %s\n", idBuf, p);
+
+        } else if (commandBuffer == "canned") {
+          printSection("mensajes prehechos");
+          for (int i = 0; i < meshCannedCount(); i++)
+            Serial.printf("  %d: %s\n", i, meshCannedAt(i));
+
+        } else if (commandBuffer.startsWith("canned ")) {
+          char line[64];
+          commandBuffer.substring(7).toCharArray(line, sizeof(line));
+          char* p = line;
+          char idxBuf[6];
+          nextToken(p, idxBuf, sizeof(idxBuf));
+          int idx = atoi(idxBuf);
+          uint16_t dst = 0xFFFF;
+          if (*p) dst = (uint16_t)strtoul(p, nullptr, 16);
+          if (idx < 0 || idx >= meshCannedCount()) {
+            Serial.println(F("  error: indice invalido (usa 'canned' para verlos)"));
+          } else {
+            meshSendText(meshCannedAt(idx), dst);
+            Serial.printf("  ok: prehecho %d -> %04X\n", idx, dst);
+          }
+
+        } else if (commandBuffer.startsWith("rgb/")) {
+          int r, g, b;
+          if (sscanf(commandBuffer.c_str(), "rgb/%d/%d/%d", &r, &g, &b) == 3) {
+            r = constrain(r, 0, 255); g = constrain(g, 0, 255); b = constrain(b, 0, 255);
+            neopixelManual((uint8_t)r, (uint8_t)g, (uint8_t)b, 3000);
+            Serial.printf("  ok: rgb -> %d/%d/%d (3s)\n", r, g, b);
+          } else {
+            Serial.println(F("  uso: rgb/R/G/B"));
+          }
+
+        } else if (commandBuffer == "buzzer") {
+          Serial.println(F("  probando buzzer..."));
+          buzzerBeep();
+          delay(200);
+          buzzerBeep();
+          Serial.println(F("  ok"));
+
+        } else if (commandBuffer == "clear" || commandBuffer == "cls") {
+          Serial.print(F("\033[2J\033[H"));
+
+        } else if (commandBuffer == "exit") {
+          Serial.println(F("  saliendo de Modo PC..."));
+          pcModeInitialized = false;
+          currentScreen = SCR_MENU;
+          commandBuffer = "";
+          return;
+
+        } else {
+          Serial.print(F("  command not found: "));
+          Serial.println(commandBuffer);
+          Serial.println(F("  escribe 'help' para ver los comandos"));
+        }
+
         commandBuffer = "";
+        Serial.println();
+        printPrompt();
       }
     } else if (c == 8 || c == 127) {
       if (commandBuffer.length() > 0) {
@@ -214,6 +247,54 @@ void serialMasterLoop() {
       Serial.write(c);
     }
   }
+}
+
+static void drawPcModeScreen() {
+  u8g2.clearBuffer();
+  u8g2.setFontMode(1);
+  u8g2.setBitmapMode(1);
+  u8g2.setFont(u8g2_font_6x10_tr);
+  u8g2.setDrawColor(1);
+  u8g2.drawBox(16, 1, 96, 14);
+  u8g2.setDrawColor(2);
+  u8g2.drawStr(35, 11, "MODO PC");
+  u8g2.setDrawColor(1);
+  u8g2.drawXBM(0, 1, 16, 14, image_Layer_9_bits);
+  u8g2.drawXBM(112, 1, 16, 14, image_Layer_9_bits);
+  u8g2.drawXBM(48, 24, 32, 16, image_terminal_bits);
+  u8g2.setFont(u8g2_font_5x7_tr);
+  u8g2.drawStr(25, 48, "Terminal activo");
+  u8g2.drawStr(15, 58, "Ver monitor serial");
+  u8g2.sendBuffer();
+}
+
+void serialMasterBegin() {}
+
+// Duena total de la pantalla mientras currentScreen == SCR_PCMODE:
+// dibuja, procesa el serial, y escucha su propio boton BACK.
+void serialMasterLoop() {
+  if (currentScreen != SCR_PCMODE) { pcModeInitialized = false; return; }
+
+  if (!pcModeInitialized) {
+    printBanner();
+    printPrompt();
+    pcModeInitialized = true;
+  }
+
+  processSerialCommand();
+  if (currentScreen != SCR_PCMODE) return;   // 'exit' ya nos saco
+
+  if (isButtonJustPressed(PIN_BACK)) {
+    buzzerClick();
+    pcModeInitialized = false;
+    Serial.println();
+    Serial.println(F("  saliendo de Modo PC..."));
+    currentScreen = SCR_MENU;
+    return;
+  }
+
+  drawPcModeScreen();
+  neopixelTick(NEO_IDLE);
 }
 
 #else  // ---- nodo normal: funciones vacias ----

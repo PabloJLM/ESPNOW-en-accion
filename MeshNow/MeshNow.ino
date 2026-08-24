@@ -83,8 +83,7 @@ void setup() {
 
 void loop() {
   meshLoop();           // procesa cola RX, HELLO, ping, reenvios
-  uiLoop();             // botones + pantalla + neopixels
-  serialMasterLoop();   // terminal por USB, siempre activa (solo maestro)
+  uiLoop();             // botones + pantalla + neopixels (Modo PC incluido)
 
   // LED1 parpadea suave = "vivo"
   digitalWrite(PIN_LED1, (millis() / 500) & 1);

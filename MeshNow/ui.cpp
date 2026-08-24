@@ -369,21 +369,15 @@ static void drawHelp() {
   u8g2.drawStr(2, 62, "BACK: menu");
 }
 
-// La terminal de verdad vive en el puerto serie (serialmaster.cpp),
-// SIEMPRE activa sin importar la pantalla. Aqui solo hay un aviso.
+// SCR_PCMODE (maestro) es duena de si misma: serialmaster.cpp dibuja
+// su propio buffer y lee su propio boton BACK (ver serialMasterLoop).
+// Aqui solo queda el caso del nodo esclavo, que no tiene esa pantalla.
 static void drawPcMode() {
   header("Modo PC");
   u8g2.setFont(u8g2_font_5x7_tr);
-#if IS_MASTER
-  u8g2.drawStr(2, 26, "Terminal activa por");
-  u8g2.drawStr(2, 36, "USB, 115200 baudios.");
-  u8g2.drawStr(2, 48, "Abre el Monitor Serial");
-  u8g2.drawStr(2, 58, "y escribe 'help'.");
-#else
   u8g2.drawStr(2, 30, "Solo el nodo maestro");
   u8g2.drawStr(2, 40, "tiene Modo PC.");
   u8g2.drawStr(2, 62, "BACK: menu");
-#endif
 }
 
 static void drawEaster() {
@@ -511,6 +505,15 @@ void uiBegin() {
 }
 
 void uiLoop() {
+#if IS_MASTER
+  // Modo PC es duena total de su pantalla (dibuja, lee serial, y su
+  // propio boton BACK) mientras esta activa -- ver serialMasterLoop().
+  if (currentScreen == SCR_PCMODE) {
+    serialMasterLoop();
+    return;
+  }
+#endif
+
   handleButtons();
 
   u8g2.clearBuffer();
