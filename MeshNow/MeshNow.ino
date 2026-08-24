@@ -57,7 +57,7 @@ static void splash() {
   u8g2.sendBuffer();
   buzzerNote(880, 90);
   buzzerNote(1320, 120);
-  delay(700);
+  delay(1000);
   
 }
 
