@@ -1,24 +1,3 @@
-// ============================================================
-//  MeshNow  -  malla ESP-NOW multi-salto para ESP32-C6
-//
-//  Mismo firmware para todas las placas. Cambia solo el flag
-//  IS_MASTER (en config.h):
-//     IS_MASTER 1 -> la placa que conectas a la PC con LabVIEW
-//     IS_MASTER 0 -> el resto de nodos
-//
-//  Pantallas (menu con UP/DOWN/SELECT, BACK vuelve al menu):
-//     1. Menu principal
-//     2. Metricas   (tx/rx/relay/dup/pps/rssi)
-//     3. Red/Vecinos (directos con RSSI + alcanzables por salto)
-//     4. Ping activos (SEL lanza barrido y cuenta respuestas)
-//     5. Easter egg  (pixel art en easteregg.h, cambialo tu)
-//     6. Scanner ESP-NOW (RSSI en vivo, barras de senal)
-//
-//  Hardware: mismo pinout del proyecto camioneta (SH1106 I2C,
-//  4 botones, 9 NeoPixels, buzzer).
-//
-//  Requiere: U8g2, Adafruit_NeoPixel (ESP-NOW viene con el core).
-// ============================================================
 #include <U8g2lib.h>
 #include <Adafruit_NeoPixel.h>
 #include "config.h"
@@ -28,13 +7,13 @@
 #include "buzzer.h"
 #include "serialmaster.h"
 
-// Pantalla (igual que camioneta)
+// Pantalla 
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, PIN_SCL, PIN_SDA);
 
 // Neopixeles
 Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 
-// Variables RGB (por compatibilidad con config.h)
+// Variables RGB 
 uint8_t neoR = 0;
 uint8_t neoG = 255;
 uint8_t neoB = 0;

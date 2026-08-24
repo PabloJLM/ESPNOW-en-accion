@@ -3,9 +3,12 @@
 
 #if IS_MASTER
 
-static uint32_t lastDump = 0;
+static uint32_t lastDump   = 0;
 static char     lineBuf[96];
-static uint8_t  linePos = 0;
+static uint8_t  linePos    = 0;
+static uint32_t dumpCount  = 0;
+static uint32_t cmdCount   = 0;
+static uint32_t lastRxAt   = 0;
 
 static void macStr(const uint8_t* m, char* out, size_t n) {
   snprintf(out, n, "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -33,11 +36,14 @@ static void dumpState() {
                   (unsigned long)(now - nd->lastSeen));
   }
   Serial.println("$END");
+  dumpCount++;
 }
 
 static void handleCommand(char* cmd) {
   // recorta espacios iniciales
   while (*cmd == ' ') cmd++;
+  cmdCount++;
+  lastRxAt = millis();
 
   if (strncmp(cmd, "PING", 4) == 0) {
     meshSendPing();
@@ -80,9 +86,16 @@ void serialMasterLoop() {
   }
 }
 
+uint32_t serialMasterDumpCount() { return dumpCount; }
+uint32_t serialMasterCmdCount()  { return cmdCount; }
+uint32_t serialMasterLastRxAt()  { return lastRxAt; }
+
 #else  // ---- nodo normal: funciones vacias ----
 
 void serialMasterBegin() {}
 void serialMasterLoop()  {}
+uint32_t serialMasterDumpCount() { return 0; }
+uint32_t serialMasterCmdCount()  { return 0; }
+uint32_t serialMasterLastRxAt()  { return 0; }
 
 #endif

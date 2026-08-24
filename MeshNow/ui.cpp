@@ -3,14 +3,12 @@
 #include "mesh.h"
 #include "neopixel.h"
 #include "buzzer.h"
+#include "serialmaster.h"
 #include "easteregg.h"
 
-// Objetos globales definidos en el .ino
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2;
 
-// ============================================================
-//  Botones (mismo patron de debounce del proyecto original)
-// ============================================================
+//botones 
 static bool isButtonJustPressed(int pin) {
   static uint8_t lastStable[4] = {HIGH, HIGH, HIGH, HIGH};
   static uint8_t lastRead[4]   = {HIGH, HIGH, HIGH, HIGH};
@@ -30,28 +28,41 @@ static bool isButtonJustPressed(int pin) {
   return false;
 }
 
-// ============================================================
-//  Menu
-// ============================================================
+// menuu
 static const char* MENU_ITEMS[] = {
   "Metricas",
   "Red / Vecinos",
   "Ping activos",
   "Scanner ESP-NOW",
+  "Mensajes",
+  "Ajustes",
+  "Ayuda",
+#if IS_MASTER
+  "Modo PC",
+#endif
   "Easter egg"
 };
 static const Screen MENU_TARGET[] = {
-  SCR_METRICS, SCR_NEIGHBORS, SCR_PING, SCR_SCANNER, SCR_EASTER
+  SCR_METRICS, SCR_NEIGHBORS, SCR_PING, SCR_SCANNER,
+  SCR_MESSAGES, SCR_SETTINGS, SCR_HELP,
+#if IS_MASTER
+  SCR_PCMODE,
+#endif
+  SCR_EASTER
 };
-static const int MENU_COUNT = 5;
+static const int MENU_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 static int menuIdx = 0;
 
-// scroll para listas
 static int listOffset = 0;
 
-// ============================================================
-//  Utilidades de dibujo
-// ============================================================
+// mensajes custom que puede mandar el maestro (no hay teclado en la placa)-----------------------------------------------------
+static const char* CANNED_MSGS[] = {
+  "Todo OK", "Necesito ayuda", "Reagrupar aqui",
+  "Objetivo visto", "Retirada", "Cargando bateria"
+};
+static const int CANNED_COUNT = sizeof(CANNED_MSGS) / sizeof(CANNED_MSGS[0]);
+
+
 static int rssiToBars(int rssi) {
   if (rssi >= -55) return 4;
   if (rssi >= -65) return 3;
@@ -60,7 +71,7 @@ static int rssiToBars(int rssi) {
   return 0;
 }
 
-// Dibuja un icono de 4 barras tipo senal wifi en (x,y) base.
+
 static void drawBars(int x, int y, int bars) {
   for (int i = 0; i < 4; i++) {
     int h = 2 + i * 2;         // 2,4,6,8
@@ -69,37 +80,45 @@ static void drawBars(int x, int y, int bars) {
   }
 }
 
+
+static void drawIdentity() {
+  char tag[14];
+#if IS_MASTER
+  snprintf(tag, sizeof(tag), "[MAESTRO]");
+#else
+  snprintf(tag, sizeof(tag), "[%s]", meshMyName());
+#endif
+  u8g2.setFont(u8g2_font_6x10_tr);
+  int w = u8g2.getStrWidth(tag);
+  u8g2.drawStr(SCREEN_W - w - 2, 9, tag);
+}
+
 static void header(const char* title) {
   u8g2.setFont(u8g2_font_6x10_tr);
   u8g2.drawStr(2, 9, title);
-  // id propio a la derecha
-  char me[10];
-  snprintf(me, sizeof(me), "[%s]", meshMyName());
-  int w = u8g2.getStrWidth(me);
-  u8g2.drawStr(SCREEN_W - w - 2, 9, me);
+  drawIdentity();
   u8g2.drawLine(0, 12, 127, 12);
 }
 
-// Recolecta nodos vivos en arr. Si scannerSort: ordena por RSSI
-// (directos primero). Si no: directos por rssi, luego por saltos.
+// Recolecta nodos vivos en arr. Directos primero (mejor rssi arriba),
+// luego los alcanzables por salto (menos saltos arriba).
 static int collectNodes(const MeshNode** arr, int maxN) {
   int n = 0;
   for (int i = 0; i < MAX_NODES && n < maxN; i++) {
     const MeshNode* nd = meshNodeAt(i);
     if (meshNodeAlive(nd)) arr[n++] = nd;
   }
-  // ordenamiento burbuja (n pequeno): directos primero, luego mejor rssi / menos saltos
   for (int a = 0; a < n - 1; a++) {
     for (int b = 0; b < n - 1 - a; b++) {
       const MeshNode* x = arr[b];
       const MeshNode* y = arr[b + 1];
       bool swap = false;
       if (x->direct != y->direct) {
-        swap = (!x->direct && y->direct);          // directos arriba
+        swap = (!x->direct && y->direct);
       } else if (x->direct) {
-        swap = (x->rssi < y->rssi);                 // mejor rssi arriba
+        swap = (x->rssi < y->rssi);
       } else {
-        swap = (x->hops > y->hops);                 // menos saltos arriba
+        swap = (x->hops > y->hops);
       }
       if (swap) { const MeshNode* t = arr[b]; arr[b] = arr[b + 1]; arr[b + 1] = t; }
     }
@@ -107,27 +126,34 @@ static int collectNodes(const MeshNode** arr, int maxN) {
   return n;
 }
 
-// ============================================================
-//  Pantallas
-// ============================================================
+// pantallas------------------
 static void drawMenu() {
-  u8g2.setFont(u8g2_font_6x10_tr);
-  u8g2.drawStr(2, 9, "MeshNow");
-  char sub[18];
-  snprintf(sub, sizeof(sub), "%d nodos", meshNodeCount());
-  int w = u8g2.getStrWidth(sub);
-  u8g2.drawStr(SCREEN_W - w - 2, 9, sub);
-  u8g2.drawLine(0, 12, 127, 12);
+  header("MeshNow");
+  char sub[20];
+  snprintf(sub, sizeof(sub), "%d nodos activos", meshNodeCount());
+  u8g2.setFont(u8g2_font_5x7_tr);
+  u8g2.drawStr(2, 20, sub);
+  if (MENU_COUNT > 4) {
+    char c[10]; snprintf(c, sizeof(c), "%d/%d", menuIdx + 1, MENU_COUNT);
+    int w = u8g2.getStrWidth(c);
+    u8g2.drawStr(SCREEN_W - w - 2, 20, c);
+  }
 
-  for (int i = 0; i < MENU_COUNT; i++) {
-    int y = 24 + i * 10;
-    if (i == menuIdx) {
+  const int rows = 4;
+  int top = menuIdx - 1; if (top < 0) top = 0;
+  if (top > MENU_COUNT - rows) top = (MENU_COUNT > rows) ? MENU_COUNT - rows : 0;
+
+  u8g2.setFont(u8g2_font_6x10_tr);
+  for (int i = 0; i < rows && (top + i) < MENU_COUNT; i++) {
+    int idx = top + i;
+    int y = 30 + i * 10;
+    if (idx == menuIdx) {
       u8g2.drawBox(0, y - 8, 128, 10);
       u8g2.setDrawColor(0);
-      u8g2.drawStr(6, y, MENU_ITEMS[i]);
+      u8g2.drawStr(6, y, MENU_ITEMS[idx]);
       u8g2.setDrawColor(1);
     } else {
-      u8g2.drawStr(6, y, MENU_ITEMS[i]);
+      u8g2.drawStr(6, y, MENU_ITEMS[idx]);
     }
   }
 }
@@ -135,7 +161,7 @@ static void drawMenu() {
 static void drawMetrics() {
   header("Metricas");
   MeshMetrics m = meshGetMetrics();
-  char l[26];
+  char l[28];
   u8g2.setFont(u8g2_font_5x7_tr);
 
   snprintf(l, sizeof(l), "TX:%lu  RX:%lu", (unsigned long)m.tx, (unsigned long)m.rx);
@@ -147,7 +173,20 @@ static void drawMetrics() {
   snprintf(l, sizeof(l), "Vivos:%d  Directos:%d", meshNodeCount(), meshDirectCount());
   u8g2.drawStr(2, 52, l);
 
-  u8g2.drawStr(2, 62, "BACK: menu");
+  int bestRssi = -127; uint16_t bestVal = 0; uint16_t bestId = 0; bool any = false;
+  for (int i = 0; i < MAX_NODES; i++) {
+    const MeshNode* nd = meshNodeAt(i);
+    if (meshNodeAlive(nd) && nd->hasSensor && nd->direct && nd->rssi > bestRssi) {
+      bestRssi = nd->rssi; bestVal = nd->sensorVal; bestId = nd->id; any = true;
+    }
+  }
+  if (any) {
+    char id[10]; meshFormatId(bestId, id, sizeof(id));
+    snprintf(l, sizeof(l), "Mas cerca: %s v=%u %ddBm", id, bestVal, bestRssi);
+    u8g2.drawStr(2, 62, l);
+  } else {
+    u8g2.drawStr(2, 62, "BACK: menu");
+  }
 }
 
 static void drawNeighbors() {
@@ -169,12 +208,13 @@ static void drawNeighbors() {
     const MeshNode* nd = arr[listOffset + i];
     int y = 22 + i * 8;
     char id[10]; meshFormatId(nd->id, id, sizeof(id));
-    char l[26];
-    if (nd->direct) snprintf(l, sizeof(l), "%s  directo %ddBm", id, nd->rssi);
-    else            snprintf(l, sizeof(l), "%s  %d saltos", id, nd->hops);
+    char sens[8] = "";
+    if (nd->hasSensor) snprintf(sens, sizeof(sens), " s%u", nd->sensorVal);
+    char l[28];
+    if (nd->direct) snprintf(l, sizeof(l), "%s  %ddBm%s", id, nd->rssi, sens);
+    else            snprintf(l, sizeof(l), "%s  %dsalt%s", id, nd->hops, sens);
     u8g2.drawStr(2, y, l);
   }
-  // indicador de scroll
   if (n > rows) {
     char c[10]; snprintf(c, sizeof(c), "%d/%d", listOffset + 1, n);
     int w = u8g2.getStrWidth(c);
@@ -185,19 +225,29 @@ static void drawNeighbors() {
 
 static void drawPing() {
   header("Ping activos");
-  u8g2.setFont(u8g2_font_6x10_tr);
+  u8g2.setFont(u8g2_font_5x7_tr);
 
   if (meshPingInProgress()) {
-    u8g2.drawStr(20, 34, "Sondeando...");
+    u8g2.setFont(u8g2_font_6x10_tr);
+    u8g2.drawStr(20, 24, "Sondeando...");
+    u8g2.setFont(u8g2_font_5x7_tr);
   } else {
     char big[20];
     snprintf(big, sizeof(big), "Activos: %d", meshPingResponders());
-    u8g2.setFont(u8g2_font_ncenB10_tr);
-    int w = u8g2.getStrWidth(big);
-    u8g2.drawStr((SCREEN_W - w) / 2, 36, big);
+    u8g2.drawStr(2, 22, big);
+    int n = meshPingResponders();
+    for (int i = 0; i < 3 && i < n; i++) {
+      char id[10]; meshFormatId(meshPingResponderId(i), id, sizeof(id));
+      u8g2.drawStr(6, 31 + i * 8, id);
+    }
   }
-  u8g2.setFont(u8g2_font_5x7_tr);
-  u8g2.drawStr(2, 62, "SEL: sondear   BACK: menu");
+
+  if (meshLastPingFrom() != 0 && millis() - meshLastPingFromAt() < 15000) {
+    char id[10]; meshFormatId(meshLastPingFrom(), id, sizeof(id));
+    char l[26]; snprintf(l, sizeof(l), "Ping recibido de: %s", id);
+    u8g2.drawStr(2, 55, l);
+  }
+  u8g2.drawStr(2, 62, "SEL: sondear  BACK: menu");
 }
 
 static void drawScanner() {
@@ -233,6 +283,81 @@ static void drawScanner() {
   }
 }
 
+static void drawMessages() {
+  header("Mensajes");
+  u8g2.setFont(u8g2_font_5x7_tr);
+
+#if IS_MASTER
+  if (listOffset < 0) listOffset = 0;
+  if (listOffset >= CANNED_COUNT) listOffset = CANNED_COUNT - 1;
+  const int rows = 3;
+  int top = listOffset - 1; if (top < 0) top = 0;
+  if (top > CANNED_COUNT - rows) top = (CANNED_COUNT > rows) ? CANNED_COUNT - rows : 0;
+  for (int i = 0; i < rows && (top + i) < CANNED_COUNT; i++) {
+    int idx = top + i;
+    int y = 21 + i * 9;
+    u8g2.drawStr(2, y, (idx == listOffset) ? ">" : " ");
+    u8g2.drawStr(10, y, CANNED_MSGS[idx]);
+  }
+  u8g2.drawLine(0, 49, 127, 49);
+  if (meshMsgHistCount() > 0) {
+    const MeshMsgItem* it = meshMsgHistAt(0);
+    char id[10]; meshFormatId(it->from, id, sizeof(id));
+    char l[28]; snprintf(l, sizeof(l), "%s: %s", id, it->text);
+    u8g2.drawStr(2, 58, l);
+  } else {
+    u8g2.drawStr(2, 58, "sin mensajes aun");
+  }
+#else
+  int n = meshMsgHistCount();
+  if (n == 0) { u8g2.drawStr(2, 30, "sin mensajes aun"); return; }
+  const int rows = 5;
+  if (listOffset > n - rows) listOffset = (n > rows) ? n - rows : 0;
+  if (listOffset < 0) listOffset = 0;
+  for (int i = 0; i < rows && (listOffset + i) < n; i++) {
+    const MeshMsgItem* it = meshMsgHistAt(listOffset + i);
+    char id[10]; meshFormatId(it->from, id, sizeof(id));
+    char l[28]; snprintf(l, sizeof(l), "%s: %s", id, it->text);
+    u8g2.drawStr(2, 22 + i * 8, l);
+  }
+#endif
+}
+
+static void drawSettings() {
+  header("Ajustes");
+  u8g2.setFont(u8g2_font_5x7_tr);
+  u8g2.drawStr(2, 30, "Proximamente...");
+  u8g2.drawStr(2, 62, "BACK: menu");
+}
+
+static void drawHelp() {
+  header("Ayuda");
+  u8g2.setFont(u8g2_font_5x7_tr);
+  u8g2.drawStr(2, 30, "Proximamente...");
+  u8g2.drawStr(2, 62, "BACK: menu");
+}
+
+static void drawPcMode() {
+  header("Modo PC");
+  u8g2.setFont(u8g2_font_5x7_tr);
+#if IS_MASTER
+  char l[28];
+  snprintf(l, sizeof(l), "Volcados: %lu", (unsigned long)serialMasterDumpCount());
+  u8g2.drawStr(2, 24, l);
+  snprintf(l, sizeof(l), "Comandos: %lu", (unsigned long)serialMasterCmdCount());
+  u8g2.drawStr(2, 34, l);
+  uint32_t lastRx = serialMasterLastRxAt();
+  if (lastRx == 0) snprintf(l, sizeof(l), "Sin comandos aun");
+  else snprintf(l, sizeof(l), "Ultimo cmd hace %lus", (unsigned long)((millis() - lastRx) / 1000));
+  u8g2.drawStr(2, 44, l);
+  u8g2.drawStr(2, 54, "USB 115200 -> LabVIEW");
+#else
+  u8g2.drawStr(2, 30, "Solo el nodo maestro");
+  u8g2.drawStr(2, 40, "tiene Modo PC.");
+#endif
+  u8g2.drawStr(2, 62, "BACK: menu");
+}
+
 static void drawEaster() {
   u8g2.drawXBMP(0, 0, EASTER_W, EASTER_H, easter_bits);
   u8g2.setDrawColor(0);
@@ -253,6 +378,7 @@ static void maybeShowToast() {
     toastUntil = millis() + 4000;
     meshClearNewText();
     buzzerBeep();
+    neopixelFlashMessage();
   }
   if (millis() < toastUntil) {
     char from[10]; meshFormatId(meshLastTextFrom(), from, sizeof(from));
@@ -263,7 +389,6 @@ static void maybeShowToast() {
     u8g2.setFont(u8g2_font_5x7_tr);
     char hdr[22]; snprintf(hdr, sizeof(hdr), "MSG de %s:", from);
     u8g2.drawStr(6, 30, hdr);
-    // recorta el texto a lo que cabe
     char body[24];
     strncpy(body, meshLastText(), sizeof(body) - 1);
     body[sizeof(body) - 1] = '\0';
@@ -272,9 +397,6 @@ static void maybeShowToast() {
   }
 }
 
-// ============================================================
-//  Botones por pantalla
-// ============================================================
 static void handleButtons() {
   if (currentScreen == SCR_MENU) {
     if (isButtonJustPressed(PIN_UP))   { buzzerClick(); menuIdx = (menuIdx + MENU_COUNT - 1) % MENU_COUNT; }
@@ -301,13 +423,22 @@ static void handleButtons() {
       if (isButtonJustPressed(PIN_DOWN)) { listOffset++; }
       break;
 
+    case SCR_MESSAGES:
+#if IS_MASTER
+      if (isButtonJustPressed(PIN_UP))   { buzzerClick(); if (listOffset > 0) listOffset--; }
+      if (isButtonJustPressed(PIN_DOWN)) { buzzerClick(); if (listOffset < CANNED_COUNT - 1) listOffset++; }
+      if (isButtonJustPressed(PIN_SELECT)) { buzzerBeep(); meshSendText(CANNED_MSGS[listOffset]); }
+#else
+      if (isButtonJustPressed(PIN_UP))   { if (listOffset > 0) listOffset--; }
+      if (isButtonJustPressed(PIN_DOWN)) { listOffset++; }
+#endif
+      break;
+
     default: break;
   }
 }
 
-// ============================================================
-//  API
-// ============================================================
+
 void uiBegin() {
   menuIdx = 0;
   listOffset = 0;
@@ -324,21 +455,16 @@ void uiLoop() {
     case SCR_NEIGHBORS: drawNeighbors(); break;
     case SCR_PING:      drawPing();      break;
     case SCR_SCANNER:   drawScanner();   break;
+    case SCR_MESSAGES:  drawMessages();  break;
+    case SCR_SETTINGS:  drawSettings();  break;
+    case SCR_HELP:      drawHelp();      break;
+    case SCR_PCMODE:    drawPcMode();    break;
     case SCR_EASTER:    drawEaster();    break;
     default:            drawMenu();      break;
   }
   maybeShowToast();
   u8g2.sendBuffer();
 
-  // neopixeles = salud de la malla (refresco suave)
-  static uint32_t lastNeo = 0;
-  if (millis() - lastNeo > 300) {
-    lastNeo = millis();
-    int best = -100;
-    for (int i = 0; i < MAX_NODES; i++) {
-      const MeshNode* nd = meshNodeAt(i);
-      if (meshNodeAlive(nd) && nd->direct && nd->rssi > best) best = nd->rssi;
-    }
-    neopixelMeshStatus(meshDirectCount(), best);
-  }
+  NeoMode mode = (currentScreen == SCR_SCANNER) ? NEO_SCANNER : NEO_IDLE;
+  neopixelTick(mode);
 }

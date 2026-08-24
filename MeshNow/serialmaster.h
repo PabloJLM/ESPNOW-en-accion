@@ -20,3 +20,9 @@
 // comas y por salto de linea.
 void serialMasterBegin();
 void serialMasterLoop();
+
+// Para pantalla "Modo PC": cuantos volcados/comandos van y hace
+// cuanto se vio actividad por USB (0 si nunca / no es maestro).
+uint32_t serialMasterDumpCount();
+uint32_t serialMasterCmdCount();
+uint32_t serialMasterLastRxAt();

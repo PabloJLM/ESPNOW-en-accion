@@ -1,16 +1,6 @@
 #pragma once
 #include <Arduino.h>
 
-// ============================================================
-//  EASTER EGG - pixel art 128x64 (1 bit)
-//
-//  Esto es un PLACEHOLDER. Reemplaza el arreglo easter_bits[]
-//  por tu propia imagen 128x64. La forma facil:
-//    1) Haz tu arte en blanco/negro 128x64 px.
-//    2) Conviertelo a XBM (GIMP: Exportar como .xbm, o
-//       image2cpp con 'Draw mode: Horizontal - LSB first').
-//    3) Pega los bytes aqui. Se dibuja con u8g2.drawXBM.
-// ============================================================
 #define EASTER_W 128
 #define EASTER_H 64
 

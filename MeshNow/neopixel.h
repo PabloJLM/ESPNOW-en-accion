@@ -4,10 +4,15 @@
 
 extern Adafruit_NeoPixel strip;
 
+enum NeoMode {
+  NEO_IDLE,     
+  NEO_SCANNER,  
+  NEO_MSG       
+};
+
 void neopixelInit();
 void neopixelClear();
 
-// Muestra la salud de la malla en la tira:
-//   enciende 'active' pixeles (nodos vivos, tope NUM_PIXELS) y
-//   colorea segun el mejor RSSI directo (verde=fuerte, rojo=debil).
-void neopixelMeshStatus(int activeNodes, int bestRssi);
+void neopixelTick(NeoMode mode);
+
+void neopixelFlashMessage();

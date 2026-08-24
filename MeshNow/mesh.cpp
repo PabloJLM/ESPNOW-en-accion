@@ -4,9 +4,7 @@
 #include <esp_wifi.h>
 #include <string.h>
 
-// ============================================================
-//  Constantes internas
-// ============================================================
+
 #define MESH_MAGIC    0xA5
 #define MESH_VERSION  1
 
@@ -14,11 +12,8 @@ static const uint8_t BROADCAST_MAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 
 #define HEADER_SIZE   (sizeof(MeshPacket) - MESH_MAX_PAYLOAD)
 
-#define PING_WINDOW   1500   // ms que esperamos respuestas de un ping
+#define PING_WINDOW   1500   
 
-// ============================================================
-//  Identidad propia
-// ============================================================
 static uint8_t  myMac[6];
 static uint16_t myId  = 0;
 static char     myName[8];
@@ -35,11 +30,7 @@ void meshFormatId(uint16_t id, char* out, size_t n) {
   snprintf(out, n, "%04X", id);
 }
 
-// ============================================================
-//  Cola de recepcion (el callback de ESP-NOW solo copia aqui;
-//  todo el trabajo pesado se hace en meshLoop(), fuera del
-//  contexto de la tarea de WiFi)
-// ============================================================
+//  Cola de recepcion
 #define RXQ_SIZE 16
 typedef struct {
   MeshPacket pkt;
@@ -52,9 +43,8 @@ static volatile RxItem   rxq[RXQ_SIZE];
 static volatile uint8_t  rxHead = 0;   // escribe el callback
 static volatile uint8_t  rxTail = 0;   // lee meshLoop
 
-// ============================================================
 //  Cache anti-duplicados (origen, secuencia)
-// ============================================================
+
 #define SEEN_SIZE 64
 typedef struct { uint16_t id; uint16_t seq; } SeenEntry;
 static SeenEntry seen[SEEN_SIZE];
@@ -72,9 +62,7 @@ static void markSeen(uint16_t id, uint16_t seq) {
   seenPos = (seenPos + 1) % SEEN_SIZE;
 }
 
-// ============================================================
 //  Tabla de nodos
-// ============================================================
 static MeshNode nodes[MAX_NODES];
 
 static MeshNode* findNode(uint16_t id) {
@@ -122,16 +110,12 @@ static void updateNode(uint16_t id, const uint8_t* mac,
   }
 }
 
-// ============================================================
 //  Metricas
-// ============================================================
 static MeshMetrics metrics;
 static uint32_t ppsWindowStart = 0;
 static uint16_t ppsCounter     = 0;
 
-// ============================================================
 //  Estado de envio / secuencia
-// ============================================================
 static uint16_t txSeq = 0;
 static uint32_t lastHello = 0;
 
@@ -152,9 +136,27 @@ static bool     newText        = false;
 static char     lastText[MESH_MAX_PAYLOAD + 1];
 static uint16_t lastTextFrom   = 0;
 
-// ============================================================
-//  Envio de bajo nivel
-// ============================================================
+// ---- quien nos hizo ping a nosotros ----
+static uint16_t lastPingFromId = 0;
+static uint32_t lastPingFromAt = 0;
+
+// ---- historial (mensajes custom + sensor), ring buffer ----
+static MeshMsgItem msgHist[MSG_HIST_SIZE];
+static int         msgHistCount = 0;
+static int         msgHistHead  = 0;
+
+static void pushHist(uint16_t from, uint8_t type, const char* text) {
+  MeshMsgItem* it = &msgHist[msgHistHead];
+  it->from = from;
+  it->type = type;
+  strncpy(it->text, text, MESH_MAX_PAYLOAD);
+  it->text[MESH_MAX_PAYLOAD] = '\0';
+  it->at = millis();
+  msgHistHead = (msgHistHead + 1) % MSG_HIST_SIZE;
+  if (msgHistCount < MSG_HIST_SIZE) msgHistCount++;
+}
+
+// envio 
 static void rawSend(MeshPacket* p, uint8_t payloadLen) {
   uint8_t total = HEADER_SIZE + payloadLen;
   if (total > sizeof(MeshPacket)) total = sizeof(MeshPacket);
@@ -184,9 +186,7 @@ static void originate(uint8_t type, uint16_t dstId,
   rawSend(&p, payloadLen);
 }
 
-// ============================================================
 //  Callback de recepcion (contexto WiFi: solo copiar y salir)
-// ============================================================
 static void onRecv(const esp_now_recv_info_t* info,
                    const uint8_t* data, int len) {
   if (len < (int)HEADER_SIZE || len > (int)sizeof(MeshPacket)) return;
@@ -203,9 +203,7 @@ static void onRecv(const esp_now_recv_info_t* info,
   rxHead = next;
 }
 
-// ============================================================
-//  Procesamiento de un paquete (en meshLoop)
-// ============================================================
+// handle de paquete 
 static void handleApp(const MeshPacket* p);
 
 static void processPacket(RxItem* it) {
@@ -255,9 +253,11 @@ static void handleApp(const MeshPacket* p) {
       uint16_t nonce = (p->payloadLen >= 2)
                        ? ((uint16_t)p->payload[0] | ((uint16_t)p->payload[1] << 8))
                        : 0;
-      pongNonce   = nonce;
-      pongDue     = millis() + random(20, 220);
-      pongPending = true;
+      pongNonce      = nonce;
+      pongDue        = millis() + random(20, 220);
+      pongPending    = true;
+      lastPingFromId = p->srcId;
+      lastPingFromAt = millis();
       break;
     }
 
@@ -285,14 +285,24 @@ static void handleApp(const MeshPacket* p) {
       lastText[n]  = '\0';
       lastTextFrom = p->srcId;
       newText      = true;
+      pushHist(p->srcId, MT_TEXT, lastText);
+      break;
+    }
+
+    case MT_SENSOR: {
+      if (p->payloadLen < 2) break;
+      uint16_t val = (uint16_t)p->payload[0] | ((uint16_t)p->payload[1] << 8);
+      MeshNode* n = findNode(p->srcId);
+      if (n) { n->hasSensor = true; n->sensorVal = val; n->sensorAt = millis(); }
+      char t[24];
+      snprintf(t, sizeof(t), "sensor=%u rssi=%d", val, metrics.lastRssi);
+      pushHist(p->srcId, MT_SENSOR, t);
       break;
     }
   }
 }
 
-// ============================================================
-//  API publica
-// ============================================================
+
 void meshBegin() {
   memset(nodes,   0, sizeof(nodes));
   memset(seen,    0, sizeof(seen));
@@ -350,6 +360,17 @@ void meshLoop() {
     originate(MT_HELLO, 0xFFFF, nullptr, 0);
   }
 
+#if !IS_MASTER
+  // 2b) telemetria simulada periodica (solo nodos, no el maestro)
+  static uint32_t lastSensor    = 0;
+  static uint32_t sensorNextGap = SENSOR_INTERVAL;
+  if (now - lastSensor >= sensorNextGap) {
+    lastSensor    = now;
+    sensorNextGap = SENSOR_INTERVAL + (uint32_t)random(0, 1500);  // jitter
+    meshSendSensorReport();
+  }
+#endif
+
   // 3) PONG pendiente (respuesta a ping con jitter)
   if (pongPending && now >= pongDue) {
     pongPending = false;
@@ -374,6 +395,7 @@ void meshSendText(const char* text) {
   uint8_t n = strlen(text);
   if (n > MESH_MAX_PAYLOAD) n = MESH_MAX_PAYLOAD;
   originate(MT_TEXT, 0xFFFF, (const uint8_t*)text, n);
+  pushHist(myId, MT_TEXT, text);
 }
 
 void meshSendPing() {
@@ -383,6 +405,16 @@ void meshSendPing() {
   pingRespCount = 0;
   uint8_t pl[2] = { (uint8_t)(pingNonce & 0xFF), (uint8_t)(pingNonce >> 8) };
   originate(MT_PING, 0xFFFF, pl, 2);
+}
+
+void meshSendSensorReport() {
+  // Simula un sensor: valor random 0..1023 (p.ej. una lectura analogica).
+  uint16_t val = (uint16_t)random(0, 1024);
+  uint8_t pl[2] = { (uint8_t)(val & 0xFF), (uint8_t)(val >> 8) };
+  originate(MT_SENSOR, 0xFFFF, pl, 2);
+  char t[16];
+  snprintf(t, sizeof(t), "sensor=%u", val);
+  pushHist(myId, MT_SENSOR, t);
 }
 
 MeshMetrics meshGetMetrics() { return metrics; }
@@ -415,9 +447,24 @@ const MeshNode* meshNodeAt(int idx) {
 }
 
 int  meshPingResponders() { return pingRespCount; }
+uint16_t meshPingResponderId(int idx) {
+  if (idx < 0 || idx >= pingRespCount) return 0;
+  return pingResponders[idx];
+}
 bool meshPingInProgress() { return pingActive; }
+uint16_t meshLastPingFrom()   { return lastPingFromId; }
+uint32_t meshLastPingFromAt() { return lastPingFromAt; }
 
 bool        meshHasNewText()   { return newText; }
 const char* meshLastText()     { return lastText; }
 uint16_t    meshLastTextFrom() { return lastTextFrom; }
 void        meshClearNewText() { newText = false; }
+
+int meshMsgHistCount() { return msgHistCount; }
+
+const MeshMsgItem* meshMsgHistAt(int idx) {
+  // idx=0 -> el mas reciente
+  if (idx < 0 || idx >= msgHistCount) return nullptr;
+  int i = (msgHistHead - 1 - idx + MSG_HIST_SIZE * 4) % MSG_HIST_SIZE;
+  return &msgHist[i];
+}
