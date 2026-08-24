@@ -4,6 +4,7 @@
 #define SCANNER_SCALE    0.35f   // el scanner brilla bajito, no a full color
 
 static uint32_t msgFlashUntil = 0;
+static uint32_t manualUntil   = 0;
 
 void neopixelInit() {
   strip.begin();
@@ -28,6 +29,12 @@ void neopixelFlashMessage() {
   msgFlashUntil = millis() + 900;
 }
 
+void neopixelManual(uint8_t r, uint8_t g, uint8_t b, uint32_t ms) {
+  manualUntil = millis() + ms;
+  for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(r, g, b));
+  strip.show();
+}
+
 static uint32_t wheelColor(uint8_t pos, float scale) {
   pos = 255 - pos;
   uint8_t r, g, b;
@@ -41,6 +48,12 @@ void neopixelTick(NeoMode mode) {
   static uint32_t lastUpdate = 0;
   static NeoMode  lastMode   = (NeoMode)-1;   // fuerza el primer refresco
   uint32_t now = millis();
+
+  if (manualUntil) {
+    if (now < manualUntil) return;   // deja el color manual tal cual, no lo pisa
+    manualUntil = 0;
+    lastMode = (NeoMode)-1;          // fuerza refresco al volver al modo normal
+  }
 
   if (msgFlashUntil) {
     if (now < msgFlashUntil) mode = NEO_MSG;

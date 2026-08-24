@@ -5,7 +5,7 @@
 
 //    IS_MASTER = 1  -> flashea UNA 
 //    IS_MASTER = 0  -> flashea el resto de placas (nodos).
-#define IS_MASTER      0
+#define IS_MASTER      1
 
 // ==================== PINES (mismo pinout camioneta) ====================
 #define PIN_SDA         6

@@ -21,3 +21,7 @@ void neopixelTick(NeoMode mode);
 
 // Arma el flash verde por MSG_FLASH_MS (llamar cuando llega un mensaje).
 void neopixelFlashMessage();
+
+// Fuerza un color solido por 'ms' (prueba rgb desde PC-mode/terminal).
+// Mientras dura, neopixelTick() no toca la tira.
+void neopixelManual(uint8_t r, uint8_t g, uint8_t b, uint32_t ms);

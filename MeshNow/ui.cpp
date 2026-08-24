@@ -369,25 +369,21 @@ static void drawHelp() {
   u8g2.drawStr(2, 62, "BACK: menu");
 }
 
+// La terminal de verdad vive en el puerto serie (serialmaster.cpp),
+// SIEMPRE activa sin importar la pantalla. Aqui solo hay un aviso.
 static void drawPcMode() {
   header("Modo PC");
   u8g2.setFont(u8g2_font_5x7_tr);
 #if IS_MASTER
-  char l[28];
-  snprintf(l, sizeof(l), "Volcados: %lu", (unsigned long)serialMasterDumpCount());
-  u8g2.drawStr(2, 24, l);
-  snprintf(l, sizeof(l), "Comandos: %lu", (unsigned long)serialMasterCmdCount());
-  u8g2.drawStr(2, 34, l);
-  uint32_t lastRx = serialMasterLastRxAt();
-  if (lastRx == 0) snprintf(l, sizeof(l), "Sin comandos aun");
-  else snprintf(l, sizeof(l), "Ultimo cmd hace %lus", (unsigned long)((millis() - lastRx) / 1000));
-  u8g2.drawStr(2, 44, l);
-  u8g2.drawStr(2, 54, "USB 115200 -> LabVIEW");
+  u8g2.drawStr(2, 26, "Terminal activa por");
+  u8g2.drawStr(2, 36, "USB, 115200 baudios.");
+  u8g2.drawStr(2, 48, "Abre el Monitor Serial");
+  u8g2.drawStr(2, 58, "y escribe 'help'.");
 #else
   u8g2.drawStr(2, 30, "Solo el nodo maestro");
   u8g2.drawStr(2, 40, "tiene Modo PC.");
-#endif
   u8g2.drawStr(2, 62, "BACK: menu");
+#endif
 }
 
 static void drawEaster() {
