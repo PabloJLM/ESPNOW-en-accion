@@ -3,19 +3,8 @@
 
 #include <Arduino.h>
 
-// ============================================================
-//  MeshNow - malla ESP-NOW multi-salto
-//
-//  Mismo firmware para TODOS los nodos.
-//  Lo unico que cambia entre el maestro y los nodos normales
-//  es el flag IS_MASTER de aqui abajo:
-//
-//    IS_MASTER = 1  -> flashea UNA sola placa (la que va al PC
-//                      con LabVIEW). Habilita el stream serial CSV.
+//    IS_MASTER = 1  -> flashea UNA 
 //    IS_MASTER = 0  -> flashea el resto de placas (nodos).
-//
-//  Todo lo demas (malla, pantallas, metricas) es identico.
-// ============================================================
 #define IS_MASTER      1
 
 // ==================== PINES (mismo pinout camioneta) ====================

@@ -47,16 +47,18 @@ static void splash() {
   u8g2.setFont(u8g2_font_ncenB10_tr);
   const char* t = "MeshNow";
   int w = u8g2.getStrWidth(t);
-  u8g2.drawStr((SCREEN_W - w) / 2, 28, t);
+  u8g2.drawStr((SCREEN_W - w) / 2, 15, t);
   u8g2.setFont(u8g2_font_5x7_tr);
   char sub[24];
   snprintf(sub, sizeof(sub), "nodo %s  %s", meshMyName(), IS_MASTER ? "(MAESTRO)" : "");
   int w2 = u8g2.getStrWidth(sub);
-  u8g2.drawStr((SCREEN_W - w2) / 2, 44, sub);
+  u8g2.drawStr((SCREEN_W - w2) / 2, 48, sub);
+  u8g2.drawCircle(64, 29, 10);
   u8g2.sendBuffer();
   buzzerNote(880, 90);
   buzzerNote(1320, 120);
   delay(700);
+  
 }
 
 void setup() {
