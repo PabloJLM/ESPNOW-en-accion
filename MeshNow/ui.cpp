@@ -235,6 +235,15 @@ static void drawScanner() {
 
 static void drawEaster() {
   u8g2.drawXBMP(0, 0, EASTER_W, EASTER_H, easter_bits);
+  u8g2.setDrawColor(0);
+  u8g2.drawStr(4, 13, "Slow");
+  u8g2.setDrawColor(1);
+  u8g2.setDrawColor(0);
+  u8g2.drawStr(4, 24, "Summer");
+  u8g2.setDrawColor(1);
+  u8g2.setDrawColor(0);
+  u8g2.drawStr(4, 33, "Eve");
+  u8g2.setDrawColor(1);
 }
 
 // ---- toast de texto recibido (se dibuja encima de todo) ----
