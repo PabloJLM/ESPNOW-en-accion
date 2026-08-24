@@ -6,9 +6,12 @@
 #include "serialmaster.h"
 #include "easteregg.h"
 
+// Objetos globales definidos en el .ino
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2;
 
-//botones 
+// ============================================================
+//  Botones (mismo patron de debounce del proyecto original)
+// ============================================================
 static bool isButtonJustPressed(int pin) {
   static uint8_t lastStable[4] = {HIGH, HIGH, HIGH, HIGH};
   static uint8_t lastRead[4]   = {HIGH, HIGH, HIGH, HIGH};
@@ -28,7 +31,9 @@ static bool isButtonJustPressed(int pin) {
   return false;
 }
 
-// menuu
+// ============================================================
+//  Menu
+// ============================================================
 static const char* MENU_ITEMS[] = {
   "Metricas",
   "Red / Vecinos",
@@ -53,16 +58,16 @@ static const Screen MENU_TARGET[] = {
 static const int MENU_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 static int menuIdx = 0;
 
+// scroll / cursor generico para listas (se resetea a 0 al entrar a cada pantalla)
 static int listOffset = 0;
 
-// mensajes custom que puede mandar el maestro (no hay teclado en la placa)-----------------------------------------------------
-static const char* CANNED_MSGS[] = {
-  "Todo OK", "Necesito ayuda", "Reagrupar aqui",
-  "Objetivo visto", "Retirada", "Cargando bateria"
-};
-static const int CANNED_COUNT = sizeof(CANNED_MSGS) / sizeof(CANNED_MSGS[0]);
+// pantalla Mensajes: 0 = eligiendo destino, 1 = eligiendo mensaje prehecho
+static int      msgState    = 0;
+static uint16_t msgTargetId = 0xFFFF;
 
-
+// ============================================================
+//  Utilidades de dibujo
+// ============================================================
 static int rssiToBars(int rssi) {
   if (rssi >= -55) return 4;
   if (rssi >= -65) return 3;
@@ -71,7 +76,7 @@ static int rssiToBars(int rssi) {
   return 0;
 }
 
-
+// Dibuja un icono de 4 barras tipo senal wifi en (x,y) base.
 static void drawBars(int x, int y, int bars) {
   for (int i = 0; i < 4; i++) {
     int h = 2 + i * 2;         // 2,4,6,8
@@ -80,7 +85,7 @@ static void drawBars(int x, int y, int bars) {
   }
 }
 
-
+// Identidad propia visible en TODAS las pantallas: id (o "MAESTRO").
 static void drawIdentity() {
   char tag[14];
 #if IS_MASTER
@@ -126,7 +131,20 @@ static int collectNodes(const MeshNode** arr, int maxN) {
   return n;
 }
 
-// pantallas------------------
+// Destinos posibles para mandar un mensaje: "Todos" + cada nodo vivo.
+static int collectTargets(uint16_t* ids, int maxN) {
+  int n = 0;
+  if (n < maxN) ids[n++] = 0xFFFF;
+  for (int i = 0; i < MAX_NODES && n < maxN; i++) {
+    const MeshNode* nd = meshNodeAt(i);
+    if (meshNodeAlive(nd)) ids[n++] = nd->id;
+  }
+  return n;
+}
+
+// ============================================================
+//  Pantallas
+// ============================================================
 static void drawMenu() {
   header("MeshNow");
   char sub[20];
@@ -173,20 +191,7 @@ static void drawMetrics() {
   snprintf(l, sizeof(l), "Vivos:%d  Directos:%d", meshNodeCount(), meshDirectCount());
   u8g2.drawStr(2, 52, l);
 
-  int bestRssi = -127; uint16_t bestVal = 0; uint16_t bestId = 0; bool any = false;
-  for (int i = 0; i < MAX_NODES; i++) {
-    const MeshNode* nd = meshNodeAt(i);
-    if (meshNodeAlive(nd) && nd->hasSensor && nd->direct && nd->rssi > bestRssi) {
-      bestRssi = nd->rssi; bestVal = nd->sensorVal; bestId = nd->id; any = true;
-    }
-  }
-  if (any) {
-    char id[10]; meshFormatId(bestId, id, sizeof(id));
-    snprintf(l, sizeof(l), "Mas cerca: %s v=%u %ddBm", id, bestVal, bestRssi);
-    u8g2.drawStr(2, 62, l);
-  } else {
-    u8g2.drawStr(2, 62, "BACK: menu");
-  }
+  u8g2.drawStr(2, 62, "BACK: menu");
 }
 
 static void drawNeighbors() {
@@ -208,11 +213,9 @@ static void drawNeighbors() {
     const MeshNode* nd = arr[listOffset + i];
     int y = 22 + i * 8;
     char id[10]; meshFormatId(nd->id, id, sizeof(id));
-    char sens[8] = "";
-    if (nd->hasSensor) snprintf(sens, sizeof(sens), " s%u", nd->sensorVal);
     char l[28];
-    if (nd->direct) snprintf(l, sizeof(l), "%s  %ddBm%s", id, nd->rssi, sens);
-    else            snprintf(l, sizeof(l), "%s  %dsalt%s", id, nd->hops, sens);
+    if (nd->direct) snprintf(l, sizeof(l), "%s  directo %ddBm", id, nd->rssi);
+    else            snprintf(l, sizeof(l), "%s  %d saltos", id, nd->hops);
     u8g2.drawStr(2, y, l);
   }
   if (n > rows) {
@@ -283,32 +286,19 @@ static void drawScanner() {
   }
 }
 
+// Etiqueta corta de un id de destino/origen ("Todos" o el id hex).
+static void targetLabel(uint16_t id, char* out, size_t n) {
+  if (id == 0xFFFF) snprintf(out, n, "Todos");
+  else              meshFormatId(id, out, n);
+}
+
 static void drawMessages() {
   header("Mensajes");
   u8g2.setFont(u8g2_font_5x7_tr);
 
 #if IS_MASTER
-  if (listOffset < 0) listOffset = 0;
-  if (listOffset >= CANNED_COUNT) listOffset = CANNED_COUNT - 1;
-  const int rows = 3;
-  int top = listOffset - 1; if (top < 0) top = 0;
-  if (top > CANNED_COUNT - rows) top = (CANNED_COUNT > rows) ? CANNED_COUNT - rows : 0;
-  for (int i = 0; i < rows && (top + i) < CANNED_COUNT; i++) {
-    int idx = top + i;
-    int y = 21 + i * 9;
-    u8g2.drawStr(2, y, (idx == listOffset) ? ">" : " ");
-    u8g2.drawStr(10, y, CANNED_MSGS[idx]);
-  }
-  u8g2.drawLine(0, 49, 127, 49);
-  if (meshMsgHistCount() > 0) {
-    const MeshMsgItem* it = meshMsgHistAt(0);
-    char id[10]; meshFormatId(it->from, id, sizeof(id));
-    char l[28]; snprintf(l, sizeof(l), "%s: %s", id, it->text);
-    u8g2.drawStr(2, 58, l);
-  } else {
-    u8g2.drawStr(2, 58, "sin mensajes aun");
-  }
-#else
+  // El maestro manda mensajes (prehechos o custom) desde Modo PC / serial;
+  // aqui solo se ve el historial.
   int n = meshMsgHistCount();
   if (n == 0) { u8g2.drawStr(2, 30, "sin mensajes aun"); return; }
   const int rows = 5;
@@ -316,9 +306,51 @@ static void drawMessages() {
   if (listOffset < 0) listOffset = 0;
   for (int i = 0; i < rows && (listOffset + i) < n; i++) {
     const MeshMsgItem* it = meshMsgHistAt(listOffset + i);
-    char id[10]; meshFormatId(it->from, id, sizeof(id));
-    char l[28]; snprintf(l, sizeof(l), "%s: %s", id, it->text);
+    char from[10]; meshFormatId(it->from, from, sizeof(from));
+    char to[10]; targetLabel(it->to, to, sizeof(to));
+    char l[30]; snprintf(l, sizeof(l), "%s>%s: %s", from, to, it->text);
     u8g2.drawStr(2, 22 + i * 8, l);
+  }
+#else
+  // El nodo elige destino (Todos o un vecino especifico) y luego un
+  // mensaje prehecho del catalogo compartido.
+  uint16_t targets[MAX_NODES + 1];
+  int tCount = collectTargets(targets, MAX_NODES + 1);
+
+  if (msgState == 0) {
+    if (listOffset >= tCount) listOffset = tCount - 1;
+    if (listOffset < 0) listOffset = 0;
+    u8g2.drawStr(2, 20, "Destino:");
+    const int rows = 4;
+    int top = listOffset - 1; if (top < 0) top = 0;
+    if (top > tCount - rows) top = (tCount > rows) ? tCount - rows : 0;
+    for (int i = 0; i < rows && (top + i) < tCount; i++) {
+      int idx = top + i;
+      int y = 30 + i * 9;
+      char lbl[10]; targetLabel(targets[idx], lbl, sizeof(lbl));
+      u8g2.drawStr(2, y, (idx == listOffset) ? ">" : " ");
+      u8g2.drawStr(10, y, lbl);
+    }
+    u8g2.drawStr(2, 62, "SEL: elegir  BACK: menu");
+  } else {
+    char dstLbl[10]; targetLabel(msgTargetId, dstLbl, sizeof(dstLbl));
+    char hdr[20]; snprintf(hdr, sizeof(hdr), "A: %s", dstLbl);
+    u8g2.drawStr(2, 20, hdr);
+
+    int cCount = meshCannedCount();
+    int cur = listOffset;
+    if (cur >= cCount) cur = cCount - 1;
+    if (cur < 0) cur = 0;
+    const int rows = 3;
+    int top = cur - 1; if (top < 0) top = 0;
+    if (top > cCount - rows) top = (cCount > rows) ? cCount - rows : 0;
+    for (int i = 0; i < rows && (top + i) < cCount; i++) {
+      int idx = top + i;
+      int y = 30 + i * 9;
+      u8g2.drawStr(2, y, (idx == cur) ? ">" : " ");
+      u8g2.drawStr(10, y, meshCannedAt(idx));
+    }
+    u8g2.drawStr(2, 62, "SEL: enviar  BACK: destino");
   }
 #endif
 }
@@ -397,6 +429,9 @@ static void maybeShowToast() {
   }
 }
 
+// ============================================================
+//  Botones por pantalla
+// ============================================================
 static void handleButtons() {
   if (currentScreen == SCR_MENU) {
     if (isButtonJustPressed(PIN_UP))   { buzzerClick(); menuIdx = (menuIdx + MENU_COUNT - 1) % MENU_COUNT; }
@@ -404,13 +439,22 @@ static void handleButtons() {
     if (isButtonJustPressed(PIN_SELECT)) {
       buzzerBeep();
       listOffset = 0;
+      msgState   = 0;
       currentScreen = MENU_TARGET[menuIdx];
     }
     return;
   }
 
-  // en cualquier sub-pantalla, BACK vuelve al menu
-  if (isButtonJustPressed(PIN_BACK)) { buzzerClick(); currentScreen = SCR_MENU; return; }
+  // BACK vuelve al menu, EXCEPTO en Mensajes/paso "elegir mensaje": ahi
+  // regresa a elegir destino (no bota toda la pantalla).
+  if (isButtonJustPressed(PIN_BACK)) {
+#if !IS_MASTER
+    if (currentScreen == SCR_MESSAGES && msgState == 1) {
+      buzzerClick(); msgState = 0; listOffset = 0; return;
+    }
+#endif
+    buzzerClick(); currentScreen = SCR_MENU; return;
+  }
 
   switch (currentScreen) {
     case SCR_PING:
@@ -423,25 +467,51 @@ static void handleButtons() {
       if (isButtonJustPressed(PIN_DOWN)) { listOffset++; }
       break;
 
-    case SCR_MESSAGES:
+    case SCR_MESSAGES: {
 #if IS_MASTER
-      if (isButtonJustPressed(PIN_UP))   { buzzerClick(); if (listOffset > 0) listOffset--; }
-      if (isButtonJustPressed(PIN_DOWN)) { buzzerClick(); if (listOffset < CANNED_COUNT - 1) listOffset++; }
-      if (isButtonJustPressed(PIN_SELECT)) { buzzerBeep(); meshSendText(CANNED_MSGS[listOffset]); }
-#else
+      // el maestro solo ve el historial aqui; para mandar usa Modo PC/serial
+      int n = meshMsgHistCount();
       if (isButtonJustPressed(PIN_UP))   { if (listOffset > 0) listOffset--; }
-      if (isButtonJustPressed(PIN_DOWN)) { listOffset++; }
+      if (isButtonJustPressed(PIN_DOWN)) { if (listOffset < n - 1) listOffset++; }
+#else
+      uint16_t targets[MAX_NODES + 1];
+      int tCount = collectTargets(targets, MAX_NODES + 1);
+      if (msgState == 0) {
+        if (isButtonJustPressed(PIN_UP))   { buzzerClick(); listOffset = (listOffset - 1 + tCount) % tCount; }
+        if (isButtonJustPressed(PIN_DOWN)) { buzzerClick(); listOffset = (listOffset + 1) % tCount; }
+        if (isButtonJustPressed(PIN_SELECT)) {
+          buzzerClick();
+          msgTargetId = targets[listOffset];
+          msgState    = 1;
+          listOffset  = 0;
+        }
+      } else {
+        int cCount = meshCannedCount();
+        if (isButtonJustPressed(PIN_UP))   { buzzerClick(); listOffset = (listOffset - 1 + cCount) % cCount; }
+        if (isButtonJustPressed(PIN_DOWN)) { buzzerClick(); listOffset = (listOffset + 1) % cCount; }
+        if (isButtonJustPressed(PIN_SELECT)) {
+          buzzerBeep();
+          meshSendText(meshCannedAt(listOffset), msgTargetId);
+          msgState   = 0;
+          listOffset = 0;
+        }
+      }
 #endif
       break;
+    }
 
     default: break;
   }
 }
 
-
+// ============================================================
+//  API
+// ============================================================
 void uiBegin() {
   menuIdx = 0;
   listOffset = 0;
+  msgState = 0;
+  msgTargetId = 0xFFFF;
 }
 
 void uiLoop() {

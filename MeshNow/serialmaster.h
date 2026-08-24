@@ -12,9 +12,13 @@
 //   $END
 //
 // ENTRADA (comandos desde LabVIEW, una linea por comando):
-//   PING          -> lanza un barrido de activos
-//   SEND <texto>  -> difunde <texto> a toda la malla (multi-salto)
-//   NODES         -> fuerza un volcado inmediato
+//   PING                     -> lanza un barrido de activos
+//   SEND <texto>             -> mensaje custom a TODOS
+//   SENDTO <id_hex> <texto>  -> mensaje custom a un nodo especifico
+//   CANNED <idx> [id_hex]    -> mensaje prehecho (ver catalogo en
+//                                meshCannedAt/meshCannedCount, mesh.h);
+//                                sin id_hex va a todos
+//   NODES                    -> fuerza un volcado inmediato
 //
 // Formato pensado para VISA Read/Write: parseable con "split" por
 // comas y por salto de linea.

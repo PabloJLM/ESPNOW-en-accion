@@ -4,13 +4,30 @@
 #include <Arduino.h>
 #include "config.h"
 
+// ============================================================
+//  Nucleo de la malla ESP-NOW (flooding controlado con TTL)
+//
+//  Idea: no hay tabla de rutas. Cada paquete lleva un TTL y un
+//  numero de secuencia unico por origen. Cuando un nodo recibe
+//  un paquete que NO ha visto, lo procesa y, si TTL>0, lo vuelve
+//  a emitir en broadcast (reenvio). Un cache anti-duplicados
+//  evita que los paquetes den vueltas para siempre.
+//
+//  Resultado: aunque D no oiga a A directamente, el mensaje de A
+//  llega a D saltando por B y C. Eso es el "multi-salto".
+//
+//  Mensajes (MT_TEXT): cualquier nodo (maestro o slave) los puede
+//  mandar a TODOS (dstId=0xFFFF) o a UNO especifico (dstId=id).
+//  El paquete siempre viaja/reenvia por toda la malla igual; lo
+//  que cambia es quien lo "muestra" (dstId==myId o ==0xFFFF).
+// ============================================================
+
 // Tipos de paquete.
 enum MeshType : uint8_t {
-  MT_HELLO  = 1,   // "sigo vivo" (mantiene la tabla de nodos)
-  MT_PING   = 2,   // barrido: pide a todos que respondan
-  MT_PONG   = 3,   // respuesta a un ping
-  MT_TEXT   = 4,   // mensaje custom (lo manda el maestro)
-  MT_SENSOR = 5    // telemetria simulada de un nodo (slave): rssi + random
+  MT_HELLO = 1,   // "sigo vivo" (mantiene la tabla de nodos)
+  MT_PING  = 2,   // barrido: pide a todos que respondan
+  MT_PONG  = 3,   // respuesta a un ping
+  MT_TEXT  = 4    // mensaje (prehecho o custom), a todos o a uno
 };
 
 // Estructura del paquete que viaja por el aire. __packed__ para
@@ -22,7 +39,7 @@ typedef struct __attribute__((packed)) {
   uint8_t  ttl;                         // saltos que le quedan
   uint8_t  hops;                        // saltos ya recorridos
   uint16_t srcId;                       // id del origen (16 bits, deriva de MAC)
-  uint16_t dstId;                       // 0xFFFF = todos
+  uint16_t dstId;                       // 0xFFFF = todos, si no = id especifico
   uint16_t seq;                         // secuencia por origen (anti-duplicado)
   uint8_t  srcMac[6];                   // MAC del origen
   uint8_t  payloadLen;                  // bytes utiles en payload
@@ -39,15 +56,12 @@ typedef struct {
   bool     direct;     // true si lo oimos directamente (y reciente)
   uint32_t lastSeen;   // millis() de cualquier noticia suya (directa o por salto)
   uint32_t lastDirect; // millis() de la ultima vez que lo oimos DIRECTO
-  bool     hasSensor;  // ya reporto telemetria simulada al menos una vez
-  uint16_t sensorVal;  // ultimo valor "sensor" (random) recibido
-  uint32_t sensorAt;   // millis() del ultimo reporte de sensor
 } MeshNode;
 
-// Item de historial de mensajes (custom o sensor) para pantalla Mensajes.
+// Item de historial de mensajes para la pantalla Mensajes / PC-mode.
 typedef struct {
   uint16_t from;
-  uint8_t  type;                         // MT_TEXT o MT_SENSOR
+  uint16_t to;                           // 0xFFFF = fue a todos
   char     text[MESH_MAX_PAYLOAD + 1];
   uint32_t at;
 } MeshMsgItem;
@@ -70,9 +84,13 @@ uint16_t    meshMyId();                          // id propio (16 bits)
 const char* meshMyName();                        // nombre corto propio
 void        meshFormatId(uint16_t id, char* out, size_t n); // id -> texto
 
-void        meshSendText(const char* text);      // difundir texto custom (maestro)
+// dstId: 0xFFFF (por defecto) = a todos; o el id de un nodo especifico.
+void        meshSendText(const char* text, uint16_t dstId = 0xFFFF);
 void        meshSendPing();                       // lanzar barrido de activos
-void        meshSendSensorReport();               // slave: rssi+random simulado
+
+// Catalogo de mensajes prehechos (mismo catalogo para el menu y PC-mode).
+int         meshCannedCount();
+const char* meshCannedAt(int idx);
 
 // Consultas para la UI / serial:
 MeshMetrics meshGetMetrics();
@@ -88,14 +106,14 @@ bool        meshPingInProgress();
 uint16_t    meshLastPingFrom();                    // quien nos hizo ping a nosotros
 uint32_t    meshLastPingFromAt();                  // millis() de ese ping
 
-// Ultimo texto recibido (para el toast en pantalla):
+// Ultimo texto recibido para MI (toast en pantalla):
 bool        meshHasNewText();                     // hay texto sin leer
 const char* meshLastText();                       // contenido
 uint16_t    meshLastTextFrom();                    // id del emisor
 void        meshClearNewText();
 
-// Historial (mensajes custom + reportes de sensor), mas reciente primero.
-int              meshMsgHistCount();
-const MeshMsgItem* meshMsgHistAt(int idx);
+// Historial de mensajes (los que mando yo + los que recibi para mi/todos).
+int                 meshMsgHistCount();
+const MeshMsgItem*  meshMsgHistAt(int idx);        // idx=0 -> el mas reciente
 
 #endif
