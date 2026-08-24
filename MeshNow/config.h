@@ -16,7 +16,7 @@
 //
 //  Todo lo demas (malla, pantallas, metricas) es identico.
 // ============================================================
-#define IS_MASTER      0
+#define IS_MASTER      1
 
 // ==================== PINES (mismo pinout camioneta) ====================
 #define PIN_SDA         6
