@@ -1,0 +1,84 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#include <Arduino.h>
+
+// ============================================================
+//  MeshNow - malla ESP-NOW multi-salto
+//
+//  Mismo firmware para TODOS los nodos.
+//  Lo unico que cambia entre el maestro y los nodos normales
+//  es el flag IS_MASTER de aqui abajo:
+//
+//    IS_MASTER = 1  -> flashea UNA sola placa (la que va al PC
+//                      con LabVIEW). Habilita el stream serial CSV.
+//    IS_MASTER = 0  -> flashea el resto de placas (nodos).
+//
+//  Todo lo demas (malla, pantallas, metricas) es identico.
+// ============================================================
+#define IS_MASTER      0
+
+// ==================== PINES (mismo pinout camioneta) ====================
+#define PIN_SDA         6
+#define PIN_SCL         7
+#define PIN_SELECT      1
+#define PIN_UP          15
+#define PIN_DOWN        23
+#define PIN_BACK        22
+#define PIN_NEOPIXEL    11
+#define PIN_BUZZER      2
+#define PIN_LED1        3
+#define PIN_GPSON       8
+#define PIN_CD          40
+
+// ==================== PANTALLA ====================
+#define SCREEN_W        128
+#define SCREEN_H        64
+
+// ==================== NEOPIXELES ====================
+#define NUM_PIXELS      9
+
+// ==================== PARAMETROS DE MALLA ====================
+// Todos los nodos DEBEN estar en el mismo canal WiFi.
+#define MESH_CHANNEL    1
+
+// Saltos maximos que puede recorrer un paquete antes de morir.
+// Con 15 nodos en un salon, 5-6 sobra de bienvenida.
+#define MESH_TTL        6
+
+// Cada cuanto un nodo anuncia que sigue vivo (ms).
+#define HELLO_INTERVAL  2000
+
+// Tras cuanto sin oir a un nodo se considera "caido" (ms).
+#define NODE_TIMEOUT    8000
+
+// Capacidad de la tabla de nodos conocidos.
+#define MAX_NODES       24
+
+// Tamano maximo de payload de texto (para mensajes multi-salto).
+#define MESH_MAX_PAYLOAD  64
+
+// Nombre corto opcional del nodo. Si se deja "" se usa el id
+// hexadecimal derivado de la MAC (unico por placa, no hay que
+// tocar el codigo por unidad).
+#define NODE_NAME       ""
+
+// ==================== ESTADOS DE PANTALLA ====================
+enum Screen {
+  SCR_SPLASH,
+  SCR_MENU,
+  SCR_METRICS,     // 2. metricas (tx/rx/relay/pps...)
+  SCR_NEIGHBORS,   // 3. a cuales estoy conectado (directos + por salto)
+  SCR_PING,        // 4. cuantas estan activas (barrido ping)
+  SCR_SCANNER,     // 6. scanner ESP-NOW (RSSI en vivo)
+  SCR_EASTER       // 5. easter egg (pixel art, lo pones tu)
+};
+
+extern Screen currentScreen;
+
+// ==================== VARIABLES RGB NEOPIXEL ====================
+extern uint8_t neoR;
+extern uint8_t neoG;
+extern uint8_t neoB;
+
+#endif
