@@ -643,6 +643,39 @@ def image_to_bitmap(path, width=128, height=64, threshold=128,
     return bm
 
 
+def bitmap_to_qimage(bitmap, bg_rgb, fg_rgb):
+    """Convierte el Bitmap 1-bit a un QImage de una sola pasada.
+
+    Evita el patron 'for y: for x: img.setPixel(...)' -- cada llamada a
+    setPixel tiene overhead de Python + validacion de limites, y con un
+    lienzo de 128x64 son 8192 llamadas por repintado. Al arrastrar un
+    elemento eso se repite en cada mouseMoveEvent y es lo que se siente
+    'pesado'/lento en el editor.
+
+    En vez de eso, el bitmap YA esta empacado 1bpp LSB-first por fila
+    (formato XBM), que es exactamente QImage.Format_MonoLSB. Solo hay que
+    alinear cada fila a 4 bytes (lo que exige QImage) y dejar que Qt haga
+    la conversion a RGB de un tiron con la tabla de colores.
+    """
+    from PyQt5.QtGui import QImage
+    w, h = bitmap.width, bitmap.height
+    bpr = bitmap.bytes_per_row
+    stride = ((w + 31) // 32) * 4
+    if stride == bpr:
+        buf = bytes(bitmap.data)
+    else:
+        tmp = bytearray(stride * h)
+        for y in range(h):
+            o = y * bpr
+            tmp[y * stride: y * stride + bpr] = bitmap.data[o:o + bpr]
+        buf = bytes(tmp)
+    img = QImage(buf, w, h, stride, QImage.Format_MonoLSB)
+    img.setColorTable([bg_rgb & 0xFFFFFF, fg_rgb & 0xFFFFFF])
+    # convertToFormat copia los datos a un buffer propio de Qt (RGB32);
+    # a partir de aqui 'buf' puede salir de scope sin problema.
+    return img.convertToFormat(QImage.Format_RGB32)
+
+
 def bitmap_to_png(bitmap, path, scale=1, invert=False):
     if not HAS_PIL:
         raise RuntimeError("Se necesita Pillow: pip install Pillow")

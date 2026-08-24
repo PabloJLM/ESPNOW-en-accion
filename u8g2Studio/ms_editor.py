@@ -138,18 +138,8 @@ class PixelCanvas(QWidget):
     # ---------- pintado ----------
     def _build_image(self):
         bg, fg, _ = THEMES.get(self.theme, THEMES["OLED azul"])
-        cbg = QColor(bg)
-        cfg = QColor(fg)
         src = self.active_bitmap()
-        img = QImage(src.width, src.height, QImage.Format_RGB32)
-        img.fill(cbg)
-        rgb_on = cfg.rgb()
-        for y in range(src.height):
-            row = y * src.bytes_per_row
-            for x in range(src.width):
-                if (src.data[row + (x >> 3)] >> (x & 7)) & 1:
-                    img.setPixel(x, y, rgb_on)
-        self._img = img
+        self._img = core.bitmap_to_qimage(src, QColor(bg).rgb(), QColor(fg).rgb())
         self._dirty = False
 
     def paintEvent(self, ev):
@@ -366,17 +356,12 @@ class PreviewWidget(QWidget):
         bm = self.canvas.active_bitmap()
         self.setFixedSize(bm.width * self.scale + 8, bm.height * self.scale + 8)
         bg, fg, _ = THEMES.get(self.canvas.theme, THEMES["OLED azul"])
+        img = core.bitmap_to_qimage(bm, QColor(bg).rgb(), QColor(fg).rgb())
         p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, False)
         p.fillRect(self.rect(), QColor(bg))
-        p.setPen(QPen(QColor(fg)))
-        for y in range(bm.height):
-            for x in range(bm.width):
-                if bm.get(x, y):
-                    if self.scale == 1:
-                        p.drawPoint(4 + x, 4 + y)
-                    else:
-                        p.fillRect(4 + x * self.scale, 4 + y * self.scale,
-                                   self.scale, self.scale, QColor(fg))
+        target = QRect(4, 4, bm.width * self.scale, bm.height * self.scale)
+        p.drawImage(target, img)
         p.end()
 
 
@@ -464,13 +449,7 @@ class ImportImageDialog(QDialog):
             return
         self.result_bitmap = bm
 
-        img = QImage(bm.width, bm.height, QImage.Format_RGB32)
-        img.fill(QColor("#0a0f1c"))
-        on = QColor("#5ad8ff").rgb()
-        for y in range(bm.height):
-            for x in range(bm.width):
-                if bm.get(x, y):
-                    img.setPixel(x, y, on)
+        img = core.bitmap_to_qimage(bm, QColor("#0a0f1c").rgb(), QColor("#5ad8ff").rgb())
         scale = max(1, min(6, 640 // max(1, bm.width)))
         pm = QPixmap.fromImage(img).scaled(bm.width * scale, bm.height * scale,
                                            Qt.KeepAspectRatio, Qt.FastTransformation)

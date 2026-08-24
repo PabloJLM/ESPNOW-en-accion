@@ -279,14 +279,7 @@ class ScreenCanvas(QWidget):
             return
 
         bm = render_ops(self.screen.ops, self.W, self.H, self.bitmaps)
-        img = QImage(bm.width, bm.height, QImage.Format_RGB32)
-        img.fill(QColor(bg))
-        on = QColor(fg).rgb()
-        for y in range(bm.height):
-            row = y * bm.bytes_per_row
-            for x in range(bm.width):
-                if (bm.data[row + (x >> 3)] >> (x & 7)) & 1:
-                    img.setPixel(x, y, on)
+        img = core.bitmap_to_qimage(bm, QColor(bg).rgb(), QColor(fg).rgb())
         p.drawImage(QRect(0, 0, bm.width * self.zoom, bm.height * self.zoom), img)
 
         if self.show_grid and self.zoom >= 4:
