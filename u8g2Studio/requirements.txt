@@ -1,2 +1,0 @@
-PyQt5>=5.15
-Pillow>=9.0      # opcional: importar/exportar imagenes
