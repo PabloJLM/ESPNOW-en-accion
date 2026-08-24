@@ -64,6 +64,7 @@ enum Screen {
   SCR_SETTINGS,    // ajustes (placeholder)
   SCR_HELP,        // ayuda (placeholder)
   SCR_PCMODE,      // solo maestro: modo PC / LabVIEW
+  SCR_PIANO,       // solo maestro: piano remoto (suena buzzer de otro nodo)
   SCR_EASTER       // easter egg (pixel art)
 };
 

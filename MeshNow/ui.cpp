@@ -44,6 +44,7 @@ static const char* MENU_ITEMS[] = {
   "Ayuda",
 #if IS_MASTER
   "Modo PC",
+  "Piano",
 #endif
   "Easter egg"
 };
@@ -52,6 +53,7 @@ static const Screen MENU_TARGET[] = {
   SCR_MESSAGES, SCR_SETTINGS, SCR_HELP,
 #if IS_MASTER
   SCR_PCMODE,
+  SCR_PIANO,
 #endif
   SCR_EASTER
 };
@@ -64,6 +66,17 @@ static int listOffset = 0;
 // pantalla Mensajes: 0 = eligiendo destino, 1 = eligiendo mensaje prehecho
 static int      msgState    = 0;
 static uint16_t msgTargetId = 0xFFFF;
+
+// pantalla Piano (solo maestro): 0 = eligiendo nodo/buzzer, 1 = tocando
+#if IS_MASTER
+static const char* PIANO_NOTES[] = {"DO", "RE", "MI", "FA", "SOL", "LA", "SI", "DO2"};
+static const int   PIANO_FREQS[] = { 262,  294,  330,  349,  392, 440, 494,  523 };
+static const int   PIANO_NOTE_COUNT = sizeof(PIANO_NOTES) / sizeof(PIANO_NOTES[0]);
+static const int   PIANO_NOTE_MS = 250;
+static int      pianoState    = 0;
+static uint16_t pianoTargetId = 0xFFFF;
+static int      pianoNoteIdx  = 0;
+#endif
 
 // ============================================================
 //  Utilidades de dibujo
@@ -380,6 +393,52 @@ static void drawPcMode() {
   u8g2.drawStr(2, 62, "BACK: menu");
 }
 
+// Piano remoto (solo maestro): elige un nodo y le suena SU buzzer, no
+// el del maestro (ver meshSendBuzz / mesh.cpp).
+static void drawPiano() {
+  header("Piano remoto");
+  u8g2.setFont(u8g2_font_5x7_tr);
+#if IS_MASTER
+  uint16_t targets[MAX_NODES + 1];
+  int tCount = collectTargets(targets, MAX_NODES + 1);
+
+  if (pianoState == 0) {
+    if (listOffset >= tCount) listOffset = tCount - 1;
+    if (listOffset < 0) listOffset = 0;
+    u8g2.drawStr(2, 20, "Nodo (buzzer):");
+    const int rows = 4;
+    int top = listOffset - 1; if (top < 0) top = 0;
+    if (top > tCount - rows) top = (tCount > rows) ? tCount - rows : 0;
+    for (int i = 0; i < rows && (top + i) < tCount; i++) {
+      int idx = top + i;
+      int y = 30 + i * 9;
+      char lbl[10]; targetLabel(targets[idx], lbl, sizeof(lbl));
+      u8g2.drawStr(2, y, (idx == listOffset) ? ">" : " ");
+      u8g2.drawStr(10, y, lbl);
+    }
+    u8g2.drawStr(2, 62, "SEL: elegir  BACK: menu");
+  } else {
+    char dstLbl[10]; targetLabel(pianoTargetId, dstLbl, sizeof(dstLbl));
+    char hdr[24]; snprintf(hdr, sizeof(hdr), "Buzzer: %s", dstLbl);
+    u8g2.drawStr(2, 20, hdr);
+
+    u8g2.setFont(u8g2_font_7x14_tr);
+    const char* n = PIANO_NOTES[pianoNoteIdx];
+    int w = u8g2.getStrWidth(n);
+    u8g2.drawStr((SCREEN_W - w) / 2, 42, n);
+    u8g2.setFont(u8g2_font_5x7_tr);
+    if (pianoNoteIdx > 0)                   u8g2.drawStr(4, 42, "<");
+    if (pianoNoteIdx < PIANO_NOTE_COUNT - 1) u8g2.drawStr(SCREEN_W - 8, 42, ">");
+
+    u8g2.drawStr(2, 62, "UP/DN nota SEL toca BACK<");
+  }
+#else
+  u8g2.drawStr(2, 30, "Solo el nodo maestro");
+  u8g2.drawStr(2, 40, "tiene Piano.");
+  u8g2.drawStr(2, 62, "BACK: menu");
+#endif
+}
+
 static void drawEaster() {
   u8g2.drawXBMP(0, 0, EASTER_W, EASTER_H, easter_bits);
   u8g2.setDrawColor(0);
@@ -430,17 +489,25 @@ static void handleButtons() {
       buzzerBeep();
       listOffset = 0;
       msgState   = 0;
+#if IS_MASTER
+      pianoState = 0;
+#endif
       currentScreen = MENU_TARGET[menuIdx];
     }
     return;
   }
 
-  // BACK vuelve al menu, EXCEPTO en Mensajes/paso "elegir mensaje": ahi
-  // regresa a elegir destino (no bota toda la pantalla).
+  // BACK vuelve al menu, EXCEPTO en Mensajes/paso "elegir mensaje" o
+  // Piano/paso "tocando": ahi regresa un paso (no bota toda la pantalla).
   if (isButtonJustPressed(PIN_BACK)) {
 #if !IS_MASTER
     if (currentScreen == SCR_MESSAGES && msgState == 1) {
       buzzerClick(); msgState = 0; listOffset = 0; return;
+    }
+#endif
+#if IS_MASTER
+    if (currentScreen == SCR_PIANO && pianoState == 1) {
+      buzzerClick(); pianoState = 0; listOffset = 0; return;
     }
 #endif
     buzzerClick(); currentScreen = SCR_MENU; return;
@@ -490,6 +557,30 @@ static void handleButtons() {
       break;
     }
 
+#if IS_MASTER
+    case SCR_PIANO: {
+      uint16_t targets[MAX_NODES + 1];
+      int tCount = collectTargets(targets, MAX_NODES + 1);
+      if (pianoState == 0) {
+        if (isButtonJustPressed(PIN_UP))   { buzzerClick(); listOffset = (listOffset - 1 + tCount) % tCount; }
+        if (isButtonJustPressed(PIN_DOWN)) { buzzerClick(); listOffset = (listOffset + 1) % tCount; }
+        if (isButtonJustPressed(PIN_SELECT)) {
+          buzzerClick();
+          pianoTargetId = targets[listOffset];
+          pianoState    = 1;
+          listOffset    = 0;
+        }
+      } else {
+        if (isButtonJustPressed(PIN_UP))   { if (pianoNoteIdx > 0) { pianoNoteIdx--; buzzerClick(); } }
+        if (isButtonJustPressed(PIN_DOWN)) { if (pianoNoteIdx < PIANO_NOTE_COUNT - 1) { pianoNoteIdx++; buzzerClick(); } }
+        if (isButtonJustPressed(PIN_SELECT)) {
+          meshSendBuzz(PIANO_FREQS[pianoNoteIdx], PIANO_NOTE_MS, pianoTargetId);
+        }
+      }
+      break;
+    }
+#endif
+
     default: break;
   }
 }
@@ -502,6 +593,11 @@ void uiBegin() {
   listOffset = 0;
   msgState = 0;
   msgTargetId = 0xFFFF;
+#if IS_MASTER
+  pianoState    = 0;
+  pianoTargetId = 0xFFFF;
+  pianoNoteIdx  = 0;
+#endif
 }
 
 void uiLoop() {
@@ -528,6 +624,7 @@ void uiLoop() {
     case SCR_SETTINGS:  drawSettings();  break;
     case SCR_HELP:      drawHelp();      break;
     case SCR_PCMODE:    drawPcMode();    break;
+    case SCR_PIANO:     drawPiano();     break;
     case SCR_EASTER:    drawEaster();    break;
     default:            drawMenu();      break;
   }

@@ -27,7 +27,8 @@ enum MeshType : uint8_t {
   MT_HELLO = 1,   // "sigo vivo" (mantiene la tabla de nodos)
   MT_PING  = 2,   // barrido: pide a todos que respondan
   MT_PONG  = 3,   // respuesta a un ping
-  MT_TEXT  = 4    // mensaje (prehecho o custom), a todos o a uno
+  MT_TEXT  = 4,   // mensaje (prehecho o custom), a todos o a uno
+  MT_BUZZ  = 5    // piano remoto: suena el buzzer de un nodo (freq+dur)
 };
 
 // Estructura del paquete que viaja por el aire. __packed__ para
@@ -87,6 +88,10 @@ void        meshFormatId(uint16_t id, char* out, size_t n); // id -> texto
 // dstId: 0xFFFF (por defecto) = a todos; o el id de un nodo especifico.
 void        meshSendText(const char* text, uint16_t dstId = 0xFFFF);
 void        meshSendPing();                       // lanzar barrido de activos
+
+// Piano remoto: hace sonar el BUZZER de dstId (no el propio). dstId
+// puede ser 0xFFFF para que suenen todos a la vez.
+void        meshSendBuzz(uint16_t freqHz, uint16_t durMs, uint16_t dstId);
 
 // Catalogo de mensajes prehechos (mismo catalogo para el menu y PC-mode).
 int         meshCannedCount();

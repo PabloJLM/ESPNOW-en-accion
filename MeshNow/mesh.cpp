@@ -1,4 +1,5 @@
 #include "mesh.h"
+#include "buzzer.h"
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
@@ -327,6 +328,21 @@ static void handleApp(const MeshPacket* p) {
       pushHist(p->srcId, p->dstId, lastText);
       break;
     }
+
+    case MT_BUZZ: {
+      // Piano remoto: solo suena si es para todos o especificamente
+      // para mi. El nodo que lo origina NUNCA lo recibe de vuelta
+      // (processPacket ignora p->srcId == myId), asi que el maestro
+      // que lo manda no suena su propio buzzer -- solo el destino.
+      bool forMe = (p->dstId == 0xFFFF || p->dstId == myId);
+      if (!forMe) break;
+      if (p->payloadLen >= 4) {
+        uint16_t freq = (uint16_t)p->payload[0] | ((uint16_t)p->payload[1] << 8);
+        uint16_t dur  = (uint16_t)p->payload[2] | ((uint16_t)p->payload[3] << 8);
+        buzzerNote(freq, dur);
+      }
+      break;
+    }
   }
 }
 
@@ -415,6 +431,14 @@ void meshSendText(const char* text, uint16_t dstId) {
   if (n > MESH_MAX_PAYLOAD) n = MESH_MAX_PAYLOAD;
   originate(MT_TEXT, dstId, (const uint8_t*)text, n);
   pushHist(myId, dstId, text);
+}
+
+void meshSendBuzz(uint16_t freqHz, uint16_t durMs, uint16_t dstId) {
+  uint8_t pl[4] = {
+    (uint8_t)(freqHz & 0xFF), (uint8_t)(freqHz >> 8),
+    (uint8_t)(durMs  & 0xFF), (uint8_t)(durMs  >> 8)
+  };
+  originate(MT_BUZZ, dstId, pl, 4);
 }
 
 void meshSendPing() {
