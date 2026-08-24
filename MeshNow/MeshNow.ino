@@ -27,6 +27,7 @@
 #include "neopixel.h"
 #include "buzzer.h"
 #include "serialmaster.h"
+#include "easteregg.h"
 
 // Pantalla (igual que camioneta)
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, PIN_SCL, PIN_SDA);
@@ -38,6 +39,15 @@ Adafruit_NeoPixel strip(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 uint8_t neoR = 0;
 uint8_t neoG = 255;
 uint8_t neoB = 0;
+
+// Logo/circuito que se muestra despues del splash. Dibuja Y manda el
+// buffer el mismo (antes solo dibujaba y nunca se veia, porque nadie
+// llamaba sendBuffer(); y tampoco se limpiaba el splash de encima).
+static void drawCircuito() {
+  u8g2.clearBuffer();
+  u8g2.drawXBMP(0, 0, 128, 64, circuito);
+  u8g2.sendBuffer();
+}
 
 // Empieza en el menu
 Screen currentScreen = SCR_MENU;
@@ -58,7 +68,8 @@ static void splash() {
   buzzerNote(880, 90);
   buzzerNote(1320, 120);
   delay(1000);
-  
+  drawCircuito();
+  delay(1000);
 }
 
 void setup() {
